@@ -48,11 +48,6 @@ void makeApiCall(string& URL) {
         if (res != CURLE_OK) {
             cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res)
                  << endl;
-        } else {
-            // Print the raw data received
-            cout << "--- Raw Data Received ---\n";
-            cout << readBuffer << endl;
-            cout << "-------------------------\n";
         }
 
         // Always cleanup when done
