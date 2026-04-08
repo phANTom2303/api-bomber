@@ -70,7 +70,7 @@ vector<double> makeApiCall(string& URL) {
 
             result = {total_time_ms, server_latency_ms, dns_time_ms,
                       tcp_time_ms, tls_time_ms};
-            cout << readBuffer << endl;
+            // cout << readBuffer << endl;
         }
 
         // Always cleanup when done
@@ -80,6 +80,50 @@ vector<double> makeApiCall(string& URL) {
     return result;
 }
 
+void formulateAndDisplayResults(vector<vector<double>>& responseTimes) {
+    // 5 vectors, one for each of :
+    //  1. Total time
+    //  2. Server Latency
+    //  3. DNS Lookup Time
+    //  4. TCP Handshake Time
+    //  5. TLS resolution Time
+    vector<vector<double>> separateMetricData(5, vector<double>());
+    vector<long double> aggregates(5, 0.0);
+    int validCount = 0;
+    for (int i = 0; i < responseTimes.size(); i++) {
+        if (responseTimes[i][0] < 0)  // skip failed requests
+            continue;
+
+        validCount++;
+        for (int j = 0; j < 5; j++) {
+            separateMetricData[j].push_back(responseTimes[i][j]);
+            aggregates[j] += responseTimes[i][j];
+        }
+    }
+
+    vector<double> averagaes(5, 0.0);
+    for (int i = 0; i < 5; i++) {
+        averagaes[i] = (aggregates[i] / validCount);
+        sort(separateMetricData[i].begin(), separateMetricData[i].end());
+    }
+
+    int p95_index = (int)ceil(0.95 * (double)validCount) - 1;
+    int p99_index = (int)ceil(0.99 * (double)validCount) - 1;
+
+    vector<string> metricNames = {"Total Time", "Server Latency",
+                                  "DNS Lookup Time", "TCP Handshake Time",
+                                  "TLS resolution Time"};
+
+    for (int i = 0; i < 5; i++) {
+        cout << "Metric : " << metricNames[i] << "\n";
+        cout << "Average : " << averagaes[i] << " ms\n";
+        cout << "95th Percentile : " << separateMetricData[i][p95_index]
+             << " ms\n";
+        cout << "99th Percentile : " << separateMetricData[i][p99_index]
+             << " ms\n";
+        cout << "\n";
+    }
+}
 vector<vector<double>> hammerURL(string& URL) {
     vector<vector<double>> responseTimes;
 
@@ -98,12 +142,14 @@ int main() {
     vector<vector<double>> responseTimes = hammerURL(URL);
     for (vector<double>& data : responseTimes) {
         if (data[0] < 0)
-            cout << "Failed" << endl;
+            cout << "Failed" << "\n";
         else {
             for (auto& d : data) cout << d << " ";
-            cout << endl;
+            cout << "\n";
         }
     }
+
+    formulateAndDisplayResults(responseTimes);
 
     // Global cleanup
     curl_global_cleanup();
