@@ -1,7 +1,6 @@
 #include <curl/curl.h>
 
 #include <algorithm>
-#include <chrono>
 #include <iostream>
 #include <json.hpp>
 #include <string>
@@ -21,14 +20,14 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     return totalSize;
 }
 
-double makeApiCall(string& URL) {
+vector<double> makeApiCall(string& URL) {
     CURL* curl;
     CURLcode res;
     string readBuffer;  // This will hold the raw data
 
     // Initialize an easy session
     curl = curl_easy_init();
-    double durationInMS = 0.0;
+    vector<double> result;
     if (curl) {
         // 1. Set the URL you want to GET
         // Note : URL.c_str() is converting a cpp string object to c style
@@ -41,25 +40,36 @@ double makeApiCall(string& URL) {
         // 3. Pass the string variable to the callback function
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
 
-        auto start = chrono::high_resolution_clock::now();
-
         // 4. Perform the request, res will get the return code
         res = curl_easy_perform(curl);
-
-        auto stop = chrono::high_resolution_clock::now();
-
-        auto duration_obj =
-            chrono::duration_cast<chrono::microseconds>(stop - start);
-
-        auto actualDuration = duration_obj.count();
-
-        durationInMS = (actualDuration / 1000.0);
 
         // Check for errors
         if (res != CURLE_OK) {
             cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res)
                  << endl;
+            result = {-1, -1, -1, -1, -1};
         } else {
+            curl_off_t dns_time_us;
+            curl_off_t tcp_time_us;
+            curl_off_t tls_time_us;
+            curl_off_t ttfb_us;
+            curl_off_t total_time_us;
+
+            // Fetch timings in microseconds
+            curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME_T, &dns_time_us);
+            curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &tcp_time_us);
+            curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls_time_us);
+            curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &ttfb_us);
+            curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &total_time_us);
+
+            double dns_time_ms = dns_time_us / 1000.0;
+            double tcp_time_ms = (tcp_time_us - dns_time_us) / 1000.0;
+            double tls_time_ms = (tls_time_us - tcp_time_us) / 1000.0;
+            double server_latency_ms = (ttfb_us - tls_time_us) / 1000.0;
+            double total_time_ms = total_time_us / 1000.0;
+
+            result = {total_time_ms, server_latency_ms, dns_time_ms,
+                      tcp_time_ms, tls_time_ms};
             cout << readBuffer << endl;
         }
 
@@ -67,11 +77,11 @@ double makeApiCall(string& URL) {
         curl_easy_cleanup(curl);
     }
 
-    return durationInMS;
+    return result;
 }
 
-vector<double> hammerURL(string& URL) {
-    vector<double> responseTimes;
+vector<vector<double>> hammerURL(string& URL) {
+    vector<vector<double>> responseTimes;
 
     for (int i = 0; i < 10; i++) {
         responseTimes.push_back(makeApiCall(URL));
@@ -85,9 +95,15 @@ int main() {
 
     string URL = "https://jsonplaceholder.typicode.com/todos/1";
 
-    vector<double> responseTimes = hammerURL(URL);
-    for (double& durationInMS : responseTimes)
-        cout << "Duration = " << durationInMS << " ms" << endl;
+    vector<vector<double>> responseTimes = hammerURL(URL);
+    for (vector<double>& data : responseTimes) {
+        if (data[0] < 0)
+            cout << "Failed" << endl;
+        else {
+            for (auto& d : data) cout << d << " ";
+            cout << endl;
+        }
+    }
 
     // Global cleanup
     curl_global_cleanup();
