@@ -1,6 +1,7 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <fstream>
 #include <iostream>
 #include <json.hpp>
 #include <mutex>
@@ -8,6 +9,24 @@
 #include <thread>
 
 using namespace std;
+
+struct Metric {
+    long long timeStamp;
+    double total_time;
+    double server_latency;
+    double dns_time;
+    double tcp_time;
+    double tls_time;
+};
+
+long long getTimeStamp() {
+    // 1. Get the current time point
+    auto now = std::chrono::system_clock::now();
+    long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                       now.time_since_epoch())
+                       .count();
+    return ms;
+}
 
 // This callback function is called by libcurl as soon as there is data received
 // that needs to be saved.
@@ -22,14 +41,14 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     return totalSize;
 }
 
-vector<double> makeApiCall(const string& URL) {
+Metric makeApiCall(const string& URL) {
     CURL* curl;
     CURLcode res;
     string readBuffer;  // This will hold the raw data
 
     // Initialize an easy session
     curl = curl_easy_init();
-    vector<double> result;
+    Metric result;
     if (curl) {
         // 1. Set the URL you want to GET
         // Note : URL.c_str() is converting a cpp string object to c style
@@ -43,6 +62,7 @@ vector<double> makeApiCall(const string& URL) {
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
 
         // 4. Perform the request, res will get the return code
+        result.timeStamp = getTimeStamp();
         res = curl_easy_perform(curl);
 
         // Check for errors
@@ -64,25 +84,20 @@ vector<double> makeApiCall(const string& URL) {
             curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &ttfb_us);
             curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &total_time_us);
 
-            double dns_time_ms = dns_time_us / 1000.0;
-            double tcp_time_ms = (tcp_time_us - dns_time_us) / 1000.0;
-            double tls_time_ms = (tls_time_us - tcp_time_us) / 1000.0;
-            double server_latency_ms = (ttfb_us - tls_time_us) / 1000.0;
-            double total_time_ms = total_time_us / 1000.0;
-
-            result = {total_time_ms, server_latency_ms, dns_time_ms,
-                      tcp_time_ms, tls_time_ms};
-            // cout << readBuffer << endl;
+            result.dns_time = dns_time_us / 1000.0;
+            result.tcp_time = (tcp_time_us - dns_time_us) / 1000.0;
+            result.tls_time = (tls_time_us - tcp_time_us) / 1000.0;
+            result.server_latency = (ttfb_us - tls_time_us) / 1000.0;
+            result.total_time = total_time_us / 1000.0;
         }
 
-        // Always cleanup when done
         curl_easy_cleanup(curl);
     }
 
     return result;
 }
 
-void formulateAndDisplayResults(vector<vector<double>>& responseTimes) {
+vector<vector<double>> formulateResults(vector<Metric>& responseTimes) {
     // 5 vectors, one for each of :
     //  1. Total time
     //  2. Server Latency
@@ -91,15 +106,23 @@ void formulateAndDisplayResults(vector<vector<double>>& responseTimes) {
     //  5. TLS resolution Time
     vector<vector<double>> separateMetricData(5, vector<double>());
     vector<long double> aggregates(5, 0.0);
+
     int validCount = 0;
     for (int i = 0; i < responseTimes.size(); i++) {
-        if (responseTimes[i][0] < 0)  // skip failed requests
+        if (responseTimes[i].total_time < 0)  // skip failed requests
             continue;
 
         validCount++;
+
+        auto& [timeStamp, total_time, server_latency, dns_time, tcp_time,
+               tls_time] = responseTimes[i];
+
+        vector<double> temp = {total_time, server_latency, dns_time, tcp_time,
+                               tls_time};
+
         for (int j = 0; j < 5; j++) {
-            separateMetricData[j].push_back(responseTimes[i][j]);
-            aggregates[j] += responseTimes[i][j];
+            separateMetricData[j].push_back(temp[j]);
+            aggregates[j] += temp[j];
         }
     }
 
@@ -112,19 +135,15 @@ void formulateAndDisplayResults(vector<vector<double>>& responseTimes) {
     int p95_index = (int)ceil(0.95 * (double)validCount) - 1;
     int p99_index = (int)ceil(0.99 * (double)validCount) - 1;
 
-    vector<string> metricNames = {"Total Time", "Server Latency",
-                                  "DNS Lookup Time", "TCP Handshake Time",
-                                  "TLS resolution Time"};
+    vector<vector<double>> results(5, vector<double>(3, 0.0));
 
     for (int i = 0; i < 5; i++) {
-        cout << "Metric : " << metricNames[i] << "\n";
-        cout << "Average : " << averagaes[i] << " ms\n";
-        cout << "95th Percentile : " << separateMetricData[i][p95_index]
-             << " ms\n";
-        cout << "99th Percentile : " << separateMetricData[i][p99_index]
-             << " ms\n";
-        cout << "\n";
+        results[i][0] = averagaes[i];
+        results[i][1] = separateMetricData[i][p95_index];
+        results[i][2] = separateMetricData[i][p99_index];
     }
+
+    return results;
 }
 
 // 1. The Mutex: Protects our shared data
@@ -132,9 +151,9 @@ std::mutex metrics_mutex;
 
 // The Worker Function: What each thread will execute
 void hammerWorker(const string& URL, int requests_per_thread,
-                  vector<vector<double>>& global_results) {
+                  vector<Metric>& global_results) {
     // Thread-local storage to prevent locking the mutex on every single request
-    vector<vector<double>> local_results;
+    vector<Metric> local_results;
     local_results.reserve(requests_per_thread);
 
     // Perform the network requests completely independently
@@ -152,9 +171,9 @@ void hammerWorker(const string& URL, int requests_per_thread,
 }
 
 // manager function to spin up worker threads and assign tasks to them
-vector<vector<double>> hammerURL(const string& URL, int total_requests,
-                                 int num_threads) {
-    vector<vector<double>> global_results;
+vector<Metric> hammerURL(const string& URL, int total_requests,
+                         int num_threads) {
+    vector<Metric> global_results;
     global_results.reserve(total_requests);
 
     vector<thread> threads;
@@ -172,7 +191,6 @@ vector<vector<double>> hammerURL(const string& URL, int total_requests,
 
     // Block the main thread until all worker threads have finished their
     // execution
-
     // to "join" a thread means to wait until thread's work is done.
     // consequently, a "joinable" thread is simply checking if a thread is
     // actually running so we dont end up waiting for a thread that is already
@@ -186,17 +204,79 @@ vector<vector<double>> hammerURL(const string& URL, int total_requests,
     return global_results;
 }
 
+void displayResults(vector<vector<double>>& results) {
+    vector<string> metricNames = {"Total Time", "Server Latency",
+                                  "DNS Lookup Time", "TCP Handshake Time",
+                                  "TLS resolution Time"};
+
+    for (int i = 0; i < 5; i++) {
+        cout << "\nMetric : " << metricNames[i] << " \n";
+        cout << "Average : " << results[i][0] << " ms | P95 : " << results[i][1]
+             << " ms | P99 : " << results[i][2] << " ms\n";
+    }
+}
+
+void exportResultsToJson(const vector<Metric>& rawData,
+                         const vector<vector<double>>& summaryResults) {
+    // 1. Auto-generate the filename using your existing timestamp function
+    long long timestamp = getTimeStamp();
+    string filename = "bomber-run-" + to_string(timestamp) + ".json";
+
+    // Initialize the main JSON object
+    nlohmann::ordered_json outputData;
+
+    // 2. Populate the Summary Statistics
+    vector<string> metricNames = {"Total Time", "Server Latency",
+                                  "DNS Lookup Time", "TCP Handshake Time",
+                                  "TLS Resolution Time"};
+
+    for (int i = 0; i < 5; i++) {
+        outputData["summary"][metricNames[i]] = {
+            {"average_ms", summaryResults[i][0]},
+            {"p95_ms", summaryResults[i][1]},
+            {"p99_ms", summaryResults[i][2]}};
+    }
+
+    // 3. Populate the Raw Data Array
+    outputData["raw_data"] = nlohmann::json::array();
+
+    for (const auto& metric : rawData) {
+        nlohmann::ordered_json metricObj = {
+            {"timestamp", metric.timeStamp},
+            {"total_time_ms", metric.total_time},
+            {"server_latency_ms", metric.server_latency},
+            {"dns_time_ms", metric.dns_time},
+            {"tcp_time_ms", metric.tcp_time},
+            {"tls_time_ms", metric.tls_time}};
+        outputData["raw_data"].push_back(metricObj);
+    }
+
+    // 4. Write to the dynamically named file
+    ofstream outputFile(filename);
+    if (outputFile.is_open()) {
+        outputFile << outputData.dump(4);
+        outputFile.close();
+        cout << "\n[SUCCESS] Results successfully exported to " << filename
+             << "\n";
+    } else {
+        cerr << "\n[ERROR] Failed to open file for writing: " << filename
+             << "\n";
+    }
+}
+
 int main() {
     // Initialize libcurl globally
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    string URL = "https://jsonplaceholder.typicode.com/todos/1";
+    string URL = "http://localhost:4000/";
 
-    vector<vector<double>> responseTimes =
-        hammerURL(URL, 480, 12);  // 100 requests across 4 threads
+    vector<Metric> responseTimes = hammerURL(URL, 100, 10);
 
-    formulateAndDisplayResults(responseTimes);
+    vector<vector<double>> results = formulateResults(responseTimes);
 
+    displayResults(results);
+
+    exportResultsToJson(responseTimes, results);
     // Global cleanup
     curl_global_cleanup();
 
