@@ -21,14 +21,14 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     return totalSize;
 }
 
-void makeApiCall(string& URL) {
+double makeApiCall(string& URL) {
     CURL* curl;
     CURLcode res;
     string readBuffer;  // This will hold the raw data
 
     // Initialize an easy session
     curl = curl_easy_init();
-
+    double durationInMS = 0.0;
     if (curl) {
         // 1. Set the URL you want to GET
         // Note : URL.c_str() is converting a cpp string object to c style
@@ -41,27 +41,10 @@ void makeApiCall(string& URL) {
         // 3. Pass the string variable to the callback function
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
 
-        // 4. Perform the request, res will get the return code
-        res = curl_easy_perform(curl);
-
-        // Check for errors
-        if (res != CURLE_OK) {
-            cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res)
-                 << endl;
-        }
-
-        // Always cleanup when done
-        curl_easy_cleanup(curl);
-    }
-}
-
-vector<double> hammerURL(string& URL) {
-    vector<double> responseTimes;
-
-    for (int i = 0; i < 10; i++) {
         auto start = chrono::high_resolution_clock::now();
 
-        makeApiCall(URL);
+        // 4. Perform the request, res will get the return code
+        res = curl_easy_perform(curl);
 
         auto stop = chrono::high_resolution_clock::now();
 
@@ -70,9 +53,28 @@ vector<double> hammerURL(string& URL) {
 
         auto actualDuration = duration_obj.count();
 
-        double durationInMS = (actualDuration / 1000.0);
+        durationInMS = (actualDuration / 1000.0);
 
-        responseTimes.push_back(durationInMS);
+        // Check for errors
+        if (res != CURLE_OK) {
+            cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res)
+                 << endl;
+        } else {
+            cout << readBuffer << endl;
+        }
+
+        // Always cleanup when done
+        curl_easy_cleanup(curl);
+    }
+
+    return durationInMS;
+}
+
+vector<double> hammerURL(string& URL) {
+    vector<double> responseTimes;
+
+    for (int i = 0; i < 10; i++) {
+        responseTimes.push_back(makeApiCall(URL));
     }
 
     return responseTimes;
