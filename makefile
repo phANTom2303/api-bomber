@@ -9,7 +9,7 @@ HEADERS= $(wildcard $(INC)/*.h)
 all: api-bomber 
 
 api-bomber: main.cpp $(SOURCES) $(HEADERS) 
-	g++ -I$(INC) main.cpp $(SOURCES) -o api-bomber
+	g++ -I$(INC) main.cpp $(SOURCES) -o api-bomber -lcurl
 
 clean:
 	rm -f api-bomber
