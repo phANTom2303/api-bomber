@@ -1,20 +1,21 @@
 #include "Metrics.hpp"
-#include <iostream>
-#include <fstream>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <fstream>
+#include <iostream>
 #include <json.hpp>
 
 using namespace std;
 
 long long getTimeStamp() {
     auto now = chrono::system_clock::now();
-    return chrono::duration_cast<chrono::milliseconds>(now.time_since_epoch()).count();
+    return chrono::duration_cast<chrono::milliseconds>(now.time_since_epoch())
+        .count();
 }
 
-
-vector<vector<double>> formulateResults(vector<Metric>& responseTimes) {
+Result formulateResults(vector<Metric>& responseTimes) {
     // 5 vectors, one for each of :
     //  1. Total time
     //  2. Server Latency
@@ -24,15 +25,16 @@ vector<vector<double>> formulateResults(vector<Metric>& responseTimes) {
     vector<vector<double>> separateMetricData(5, vector<double>());
     vector<long double> aggregates(5, 0.0);
 
-    int validCount = 0;
+    int successCount = 0;
     for (int i = 0; i < responseTimes.size(); i++) {
         if (responseTimes[i].total_time < 0)  // skip failed requests
             continue;
 
-        validCount++;
+        auto& [response_code, timeStamp, total_time, server_latency, dns_time,
+               tcp_time, tls_time] = responseTimes[i];
 
-        auto& [timeStamp, total_time, server_latency, dns_time, tcp_time,
-               tls_time] = responseTimes[i];
+        if (response_code >= 200 && response_code < 300)
+            successCount++;
 
         vector<double> temp = {total_time, server_latency, dns_time, tcp_time,
                                tls_time};
@@ -45,12 +47,12 @@ vector<vector<double>> formulateResults(vector<Metric>& responseTimes) {
 
     vector<double> averagaes(5, 0.0);
     for (int i = 0; i < 5; i++) {
-        averagaes[i] = (aggregates[i] / validCount);
+        averagaes[i] = (aggregates[i] / successCount);
         sort(separateMetricData[i].begin(), separateMetricData[i].end());
     }
 
-    int p95_index = (int)ceil(0.95 * (double)validCount) - 1;
-    int p99_index = (int)ceil(0.99 * (double)validCount) - 1;
+    int p95_index = (int)ceil(0.95 * (double)successCount) - 1;
+    int p99_index = (int)ceil(0.99 * (double)successCount) - 1;
 
     vector<vector<double>> results(5, vector<double>(3, 0.0));
 
@@ -60,10 +62,17 @@ vector<vector<double>> formulateResults(vector<Metric>& responseTimes) {
         results[i][2] = separateMetricData[i][p99_index];
     }
 
-    return results;
+    Result res;
+    res.metricStatistics = results;
+    res.successCount = successCount;
+    res.failCount = responseTimes.size() - successCount;
+    return res;
 }
 
-void displayResults(vector<vector<double>>& results) {
+void displayResults(Result res) {
+    cout << "Successful requests : " << res.successCount
+         << " \n Failed requests : " << res.failCount << " \n";
+    vector<vector<double>>& results = res.metricStatistics;
     vector<string> metricNames = {"Total Time", "Server Latency",
                                   "DNS Lookup Time", "TCP Handshake Time",
                                   "TLS resolution Time"};
@@ -75,20 +84,20 @@ void displayResults(vector<vector<double>>& results) {
     }
 }
 
-void exportResultsToJson(const vector<Metric>& rawData,
-                         const vector<vector<double>>& summaryResults) {
+void exportResultsToJson(const vector<Metric>& rawData, Result res) {
     // 1. Auto-generate the filename using your existing timestamp function
     long long timestamp = getTimeStamp();
     string filename = "bomber-run-" + to_string(timestamp) + ".json";
 
     // Initialize the main JSON object
     nlohmann::ordered_json outputData;
-
+    outputData["summary"]["succes_count"] = res.successCount;
+    outputData["summary"]["failed_count"] = res.failCount;
     // 2. Populate the Summary Statistics
     vector<string> metricNames = {"Total Time", "Server Latency",
                                   "DNS Lookup Time", "TCP Handshake Time",
                                   "TLS Resolution Time"};
-
+    vector<vector<double>>& summaryResults = res.metricStatistics;
     for (int i = 0; i < 5; i++) {
         outputData["summary"][metricNames[i]] = {
             {"average_ms", summaryResults[i][0]},
@@ -96,7 +105,7 @@ void exportResultsToJson(const vector<Metric>& rawData,
             {"p99_ms", summaryResults[i][2]}};
     }
 
-    // 3. Populate the Raw Data Array
+        // 3. Populate the Raw Data Array
     outputData["raw_data"] = nlohmann::json::array();
 
     for (const auto& metric : rawData) {

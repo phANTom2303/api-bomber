@@ -14,10 +14,10 @@ int main() {
     vector<Metric> responseTimes = hammerURL(
         config.url, config.requests_per_thread, config.concurrent_requests);
 
-    vector<vector<double>> results = formulateResults(responseTimes);
+    Result finalResult = formulateResults(responseTimes);
 
-    displayResults(results);
-    exportResultsToJson(responseTimes, results);
+    displayResults(finalResult);
+    exportResultsToJson(responseTimes, finalResult);
 
     curl_global_cleanup();
     return 0;

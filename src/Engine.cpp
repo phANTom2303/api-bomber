@@ -52,19 +52,22 @@ Metric makeApiCall(const string& URL) {
                  << endl;
             result = {-1, -1, -1, -1, -1};
         } else {
+            long response_code;
             curl_off_t dns_time_us;
             curl_off_t tcp_time_us;
             curl_off_t tls_time_us;
             curl_off_t ttfb_us;
             curl_off_t total_time_us;
-
             // Fetch timings in microseconds
+            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
             curl_easy_getinfo(curl, CURLINFO_NAMELOOKUP_TIME_T, &dns_time_us);
             curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &tcp_time_us);
             curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls_time_us);
             curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &ttfb_us);
             curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &total_time_us);
 
+            result.response_code = response_code;
+            cout << response_code << "\n";
             result.dns_time = dns_time_us / 1000.0;
             result.tcp_time = (tcp_time_us - dns_time_us) / 1000.0;
             result.tls_time = (tls_time_us - tcp_time_us) / 1000.0;
