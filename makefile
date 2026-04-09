@@ -2,8 +2,8 @@ SRC=src
 INC=includes
 
 #defining wildcards to avoid typing all the files separately:
-SOURCES= $(wildcard $(SRC)/*.c)
-HEADERS= $(wildcard $(INC)/*.h)
+SOURCES= $(wildcard $(SRC)/*.cpp)
+HEADERS= $(wildcard $(INC)/*.hpp)
 
 # The 'all' target is the default one.
 all: api-bomber 
