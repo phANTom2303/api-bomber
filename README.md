@@ -96,3 +96,6 @@ Once compiled and configured, simply execute the binary:
 
 The tool will parse your configuration, execute the load test, print live metrics to the console, and automatically generate a results file formatted as bomber-run-<timestamp>.json in your current directory.
 
+## Limitations and Future Scope
+
+Currently this system hits the exact same endpoint multiple times, there is no way to customize path parameters or query parameters that could be different between requests. Custome headers will also soon be added.
