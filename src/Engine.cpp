@@ -67,7 +67,6 @@ Metric makeApiCall(const string& URL) {
             curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME_T, &total_time_us);
 
             result.response_code = response_code;
-            cout << response_code << "\n";
             result.dns_time = dns_time_us / 1000.0;
             result.tcp_time = (tcp_time_us - dns_time_us) / 1000.0;
             result.tls_time = (tls_time_us - tcp_time_us) / 1000.0;
