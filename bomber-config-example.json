@@ -1,0 +1,5 @@
+{
+    "url": "http://localhost:4000/",
+    "concurrent_requests": 10,
+    "requests_per_thread": 1000
+}

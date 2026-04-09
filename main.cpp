@@ -1,13 +1,14 @@
 #include <curl/curl.h>
 
 #include <algorithm>
+#include <cstdlib>
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <json.hpp>
 #include <mutex>
 #include <string>
 #include <thread>
-
 using namespace std;
 
 struct Metric {
@@ -17,6 +18,12 @@ struct Metric {
     double dns_time;
     double tcp_time;
     double tls_time;
+};
+
+struct Config {
+    string url;
+    int concurrent_requests;
+    int requests_per_thread;
 };
 
 long long getTimeStamp() {
@@ -171,14 +178,12 @@ void hammerWorker(const string& URL, int requests_per_thread,
 }
 
 // manager function to spin up worker threads and assign tasks to them
-vector<Metric> hammerURL(const string& URL, int total_requests,
+vector<Metric> hammerURL(const string& URL, int requests_per_thread,
                          int num_threads) {
     vector<Metric> global_results;
-    global_results.reserve(total_requests);
+    global_results.reserve(requests_per_thread * num_threads);
 
     vector<thread> threads;
-
-    int requests_per_thread = total_requests / num_threads;
 
     // Spawn the OS threads
     for (int i = 0; i < num_threads; i++) {
@@ -264,13 +269,53 @@ void exportResultsToJson(const vector<Metric>& rawData,
     }
 }
 
+Config loadConfig(const string& filename) {
+    ifstream configFile(filename);
+
+    // 1. Check if the file exists and can be opened
+    if (!configFile.is_open()) {
+        cerr << "\n[FATAL ERROR] Could not find '" << filename
+             << "' in the current directory.\n";
+        cerr << "Please create this file to configure your test.\n";
+        exit(EXIT_FAILURE);  // Immediately terminates the program with error
+                             // code 1
+    }
+
+    nlohmann::json j;
+    try {
+        // 2. Parse the file into the JSON object
+        configFile >> j;
+
+        // 3. Extract the variables and map them to our struct
+        Config config;
+        config.url = j.at("url").get<string>();
+        config.concurrent_requests = j.at("concurrent_requests").get<int>();
+        config.requests_per_thread = j.at("requests_per_thread").get<int>();
+
+        cout << "[INFO] Configuration loaded successfully.\n";
+        cout << " -> Target URL: " << config.url << "\n";
+        cout << " -> Threads: " << config.concurrent_requests << "\n";
+        cout << " -> Requests per thread: " << config.requests_per_thread
+             << "\n\n";
+
+        return config;
+
+    } catch (const nlohmann::json::exception& e) {
+        // 4. Catch JSON parsing errors (e.g., missing commas, missing keys)
+        cerr << "\n[FATAL ERROR] Failed to parse '" << filename << "'.\n";
+        cerr << "JSON Error: " << e.what() << "\n";
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main() {
     // Initialize libcurl globally
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
-    string URL = "http://localhost:4000/";
+    Config config = loadConfig("bomber-config.json");
 
-    vector<Metric> responseTimes = hammerURL(URL, 100, 10);
+    vector<Metric> responseTimes = hammerURL(
+        config.url, config.requests_per_thread, config.concurrent_requests);
 
     vector<vector<double>> results = formulateResults(responseTimes);
 
